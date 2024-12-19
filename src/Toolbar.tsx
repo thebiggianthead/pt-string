@@ -1,31 +1,31 @@
-import {useId, useMemo} from 'react'
 import {
   EditorSelection,
   PortableTextEditor,
   usePortableTextEditor,
   usePortableTextEditorSelection,
 } from '@portabletext/editor'
-import type {BlockDecoratorDefinition} from 'sanity'
+import {
+  BoldIcon,
+  CodeIcon,
+  EllipsisVerticalIcon as MenuIcon,
+  type IconComponent,
+  ItalicIcon,
+  StrikethroughIcon,
+  UnderlineIcon,
+} from '@sanity/icons'
 import {
   Button,
-  Text,
   Flex,
-  MenuButton,
   Menu,
+  MenuButton,
   MenuItem,
-  useMediaIndex,
+  Text,
   Tooltip,
   TooltipDelayGroupProvider,
+  useMediaIndex,
 } from '@sanity/ui'
-import {
-  type IconComponent,
-  UnderlineIcon,
-  StrikethroughIcon,
-  CodeIcon,
-  ItalicIcon,
-  BoldIcon,
-  EllipsisVerticalIcon as MenuIcon,
-} from '@sanity/icons'
+import {useId, useMemo} from 'react'
+import type {BlockDecoratorDefinition} from 'sanity'
 
 const iconMap: Record<string, IconComponent> = {
   strong: BoldIcon,
@@ -110,7 +110,7 @@ function ToolbarButton(props: {
         padding={2}
         selected={active}
         key={props.decorator.value}
-        text={Boolean(Icon) ? undefined : props.decorator.title}
+        text={Icon ? undefined : props.decorator.title}
         icon={Icon}
         onClick={() => {
           PortableTextEditor.toggleMark(props.editor, props.decorator.value)

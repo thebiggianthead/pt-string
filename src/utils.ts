@@ -1,5 +1,5 @@
 import {type Patch} from '@portabletext/editor'
-import {SANITY_PATCH_TYPE, type PortableTextTextBlock} from 'sanity'
+import {FormPatch, type PortableTextTextBlock, SANITY_PATCH_TYPE} from 'sanity'
 
 export function toPlainText(blocks?: PortableTextTextBlock[]): string | undefined {
   if (!blocks) return undefined
@@ -21,6 +21,6 @@ export function toPlainText(blocks?: PortableTextTextBlock[]): string | undefine
   )
 }
 
-export function toFormPatches(patches: any) {
-  return patches.map((p: Patch) => ({...p, patchType: SANITY_PATCH_TYPE}))
+export function toFormPatches(patches: Patch[]): FormPatch[] {
+  return patches.map((p: Patch) => ({...p, patchType: SANITY_PATCH_TYPE}) as FormPatch)
 }

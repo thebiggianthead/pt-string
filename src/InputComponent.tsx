@@ -9,21 +9,23 @@ import {
 } from '@portabletext/editor'
 import {htmlToBlocks, randomKey} from '@sanity/block-tools'
 import {Box, Card, Flex, ThemeProvider, useToast} from '@sanity/ui'
-import {useCallback, useState, type ReactNode} from 'react'
+import {type JSX, type KeyboardEvent, useCallback, useState} from 'react'
 import {
   ArrayDefinition,
+  ArrayOfObjectsInputProps,
   BlockDefinition,
   ChangeIndicator,
-  PortableTextChild,
-  TypedObject,
   type PortableTextBlock,
-  type PortableTextInputProps,
+  PortableTextChild,
+  // type PortableTextInputProps,
   type PortableTextSpan,
+  TypedObject,
 } from 'sanity'
 import styled from 'styled-components'
-import {Toolbar} from './Toolbar'
+
 import {decoratorMap} from './decoratorMap'
 import {ptStringType} from './schema'
+import {Toolbar} from './Toolbar'
 import {PtStringOptions} from './types'
 import {toFormPatches} from './utils'
 
@@ -75,14 +77,14 @@ export function InputComponent({
   changed,
   schemaType,
   onChange,
-}: PortableTextInputProps & {schemaType: {options?: PtStringOptions}}): ReactNode {
+}: ArrayOfObjectsInputProps & {schemaType: {options?: PtStringOptions}}): JSX.Element {
   const toast = useToast()
   const [isOffline, setIsOffline] = useState(false)
   const [hasFocusWithin, setHasFocusWithin] = useState(false)
 
   const schema = optionizedSchemaType(ptStringType, schemaType.options)
 
-  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Enter') {
       event.preventDefault()
       event.stopPropagation()
@@ -93,18 +95,18 @@ export function InputComponent({
    * Merge blocks from pasted HTML into a single block
    */
   const handlePaste = useCallback((input: PasteData): OnPasteResult => {
-    const {event, schemaTypes, path} = input
+    const {event, schemaTypes, path: inputPath} = input
     const html = event.clipboardData.getData('text/html')
-    if (!html) return {insert: [], path}
+    if (!html) return {insert: [], path: inputPath}
 
     const blocks = htmlToBlocks(html, schemaTypes.portableText) as PortableTextBlock[]
 
     const mergeToSingleBlock = (
-      blocks: PortableTextBlock[],
+      blocksToMerge: PortableTextBlock[],
     ): Array<PortableTextBlock | PortableTextSpan> => {
       let mergedSpans: PortableTextSpan[] = []
 
-      blocks.forEach((block: PortableTextBlock) => {
+      blocksToMerge.forEach((block: PortableTextBlock) => {
         if (block._type === 'block' && Array.isArray(block.children)) {
           block.children.forEach((child: PortableTextChild) => {
             if (child._type === 'span') {
@@ -144,7 +146,7 @@ export function InputComponent({
 
     return {
       insert: mergeToSingleBlock(blocks) as unknown as TypedObject[],
-      path,
+      path: inputPath,
     }
   }, [])
 
@@ -192,14 +194,11 @@ export function InputComponent({
     return <Placeholder>Empty</Placeholder>
   }, [])
 
-  const renderDecorator: RenderDecoratorFunction = useCallback(
-    (props) => {
-      const CustomDecoratorComponent = props.schemaType.component
-      if (CustomDecoratorComponent) return <CustomDecoratorComponent {...props} />
-      return (decoratorMap.get(props.value) ?? ((props) => props.children))(props)
-    },
-    [schemaType?.options],
-  )
+  const renderDecorator: RenderDecoratorFunction = useCallback((props) => {
+    const CustomDecoratorComponent = props.schemaType.component
+    if (CustomDecoratorComponent) return <CustomDecoratorComponent {...props} />
+    return (decoratorMap.get(props.value) ?? ((decoratorProps) => decoratorProps.children))(props)
+  }, [])
 
   return (
     <ThemeProvider>

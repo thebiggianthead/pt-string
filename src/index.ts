@@ -1,4 +1,5 @@
-import {PreviewConfig, definePlugin} from 'sanity'
+import {definePlugin, PreviewConfig} from 'sanity'
+
 import {ptStringType} from './schema'
 import {toPlainText} from './utils'
 

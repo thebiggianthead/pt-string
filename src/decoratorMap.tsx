@@ -1,5 +1,6 @@
-import styled from 'styled-components'
 import {BlockDecoratorRenderProps} from '@portabletext/editor'
+import {JSX} from 'react'
+import styled from 'styled-components'
 
 const Strong = styled.strong`
   font-weight: 700 !important;

@@ -1,4 +1,5 @@
 import {type ArrayDefinition, defineType} from 'sanity'
+
 import {InputComponent} from './InputComponent'
 import {PtStringOptions} from './types'
 /**
@@ -28,7 +29,7 @@ declare module '@sanity/types' {
 export const ptStringType = defineType({
   type: 'array',
   name: ptStringTypeName,
-  components: {input: InputComponent as any},
+  components: {input: InputComponent},
   of: [
     {
       type: 'block',
