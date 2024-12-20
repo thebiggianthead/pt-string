@@ -1,15 +1,16 @@
 import {
-  EditorChange,
+  EditorEmittedEvent,
+  EditorEventListener,
+  EditorProvider,
   OnPasteResult,
   PasteData,
   PortableTextEditable,
-  PortableTextEditor,
   RenderDecoratorFunction,
   RenderPlaceholderFunction,
 } from '@portabletext/editor'
 import {htmlToBlocks, randomKey} from '@sanity/block-tools'
 import {Box, Card, Flex, ThemeProvider, useToast} from '@sanity/ui'
-import {type JSX, type KeyboardEvent, useCallback, useState} from 'react'
+import {type JSX, type KeyboardEvent, useCallback, useMemo, useState} from 'react'
 import {
   ArrayDefinition,
   ArrayOfObjectsInputProps,
@@ -17,10 +18,11 @@ import {
   ChangeIndicator,
   type PortableTextBlock,
   PortableTextChild,
-  // type PortableTextInputProps,
   type PortableTextSpan,
   TypedObject,
+  useConnectionState,
 } from 'sanity'
+import {useDocumentPane} from 'sanity/structure'
 import styled from 'styled-components'
 
 import {decoratorMap} from './decoratorMap'
@@ -79,8 +81,13 @@ export function InputComponent({
   onChange,
 }: ArrayOfObjectsInputProps & {schemaType: {options?: PtStringOptions}}): JSX.Element {
   const toast = useToast()
-  const [isOffline, setIsOffline] = useState(false)
   const [hasFocusWithin, setHasFocusWithin] = useState(false)
+  const {editState, documentId, documentType} = useDocumentPane()
+  const connectionState = useConnectionState(documentId, documentType)
+
+  const ready = useMemo(() => {
+    return connectionState === 'connected' && editState?.ready
+  }, [connectionState, editState])
 
   const schema = optionizedSchemaType(ptStringType, schemaType.options)
 
@@ -151,43 +158,27 @@ export function InputComponent({
   }, [])
 
   const handleEditorChange = useCallback(
-    (change: EditorChange) => {
-      switch (change.type) {
+    (event: EditorEmittedEvent) => {
+      switch (event.type) {
         case 'mutation':
-          onChange(toFormPatches(change.patches))
+          onChange(toFormPatches(event.patches))
           break
-        case 'connection':
-          if (change.value === 'offline') {
-            setIsOffline(true)
-          } else if (change.value === 'online') {
-            setIsOffline(false)
-          }
-          break
-        case 'focus':
+        case 'focused':
           setHasFocusWithin(true)
-          elementProps.onFocus(change.event)
           break
-        case 'blur':
-          setHasFocusWithin(false)
-          elementProps.onBlur(change.event)
-          break
-        case 'undo':
-        case 'redo':
-          onChange(toFormPatches(change.patches))
+        case 'blurred':
+          setHasFocusWithin(true)
           break
         case 'error':
-          // Ignore warings
-          if (change.level === 'error') {
-            toast.push({
-              status: change.level,
-              description: change.description,
-            })
-          }
+          toast.push({
+            status: 'error',
+            description: event.description,
+          })
           break
         default:
       }
     },
-    [onChange, toast, elementProps],
+    [onChange, toast],
   )
 
   const renderPlaceholder: RenderPlaceholderFunction = useCallback(() => {
@@ -205,21 +196,24 @@ export function InputComponent({
       <ChangeIndicator
         path={path}
         isChanged={changed}
+        readOnly={!ready || readOnly}
         hasFocus={hasFocusWithin}
-        readOnly={readOnly}
       >
-        <PortableTextEditor
-          onChange={handleEditorChange}
-          readOnly={isOffline || readOnly}
-          schemaType={schema}
-          value={value}
+        <EditorProvider
+          initialConfig={{
+            readOnly: !ready || readOnly,
+            initialValue: value as PortableTextBlock[],
+            schema,
+          }}
         >
+          <EditorEventListener on={handleEditorChange} />
           <InputWrapper
             shadow={1}
             paddingY={(schema?.of[0] as BlockDefinition)?.marks?.decorators?.length ? 1 : 2}
             paddingRight={1}
             paddingLeft={3}
             radius={2}
+            tone={!ready || readOnly ? 'transparent' : 'default'}
           >
             <Flex gap={1} align="center">
               <Box flex={1} overflow={'auto'} height="fill">
@@ -228,13 +222,14 @@ export function InputComponent({
                   renderPlaceholder={renderPlaceholder}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
+                  readOnly={!ready || readOnly}
                   {...elementProps}
                 />
               </Box>
               <Toolbar />
             </Flex>
           </InputWrapper>
-        </PortableTextEditor>
+        </EditorProvider>
       </ChangeIndicator>
     </ThemeProvider>
   )

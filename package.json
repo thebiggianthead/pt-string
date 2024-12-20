@@ -18,7 +18,7 @@
   "license": "MIT",
   "author": "Rostislav Melkumyan <rosti@sanity.io>",
   "sideEffects": false,
-  "type": "module",
+  "type": "commonjs",
   "exports": {
     ".": {
       "source": "./src/index.ts",

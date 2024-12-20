@@ -1,9 +1,5 @@
-import {
-  EditorSelection,
-  PortableTextEditor,
-  usePortableTextEditor,
-  usePortableTextEditorSelection,
-} from '@portabletext/editor'
+import {type Editor, useEditor, useEditorSelector} from '@portabletext/editor'
+import * as selectors from '@portabletext/editor/selectors'
 import {
   BoldIcon,
   CodeIcon,
@@ -24,7 +20,7 @@ import {
   TooltipDelayGroupProvider,
   useMediaIndex,
 } from '@sanity/ui'
-import {useId, useMemo} from 'react'
+import {type JSX, useCallback, useId, useMemo} from 'react'
 import type {BlockDecoratorDefinition} from 'sanity'
 
 const iconMap: Record<string, IconComponent> = {
@@ -36,36 +32,31 @@ const iconMap: Record<string, IconComponent> = {
 }
 
 const MOBILE_DECORATOR_LIMIT = 2
-const DESKTOP_DECORATOR_LIMIT = 5
+const DESKTOP_DECORATOR_LIMIT = 2
 
-export function Toolbar() {
-  const editor = usePortableTextEditor()
-  const selection = usePortableTextEditorSelection()
+export function Toolbar(): JSX.Element {
+  const editor = useEditor()
+  const currentSchema = editor.getSnapshot().context.schema
   const mediaIndex = useMediaIndex()
   const menuId = useId()
 
   const isMobile = mediaIndex < 2
-  const decorators = editor.schemaTypes.decorators
+  const decorators = currentSchema.decorators
   const decoratorLimit = isMobile ? MOBILE_DECORATOR_LIMIT : DESKTOP_DECORATOR_LIMIT
 
   const mainDecorators = useMemo(() => {
     return decorators.slice(0, decoratorLimit)
-  }, [isMobile, decorators])
+  }, [decorators, decoratorLimit])
   const overflowDecorators = useMemo(() => {
     return decorators.slice(decoratorLimit)
-  }, [isMobile, decorators])
+  }, [decorators, decoratorLimit])
   const showMenuButton = decorators.length > decoratorLimit
 
   return (
     <Flex gap={1} wrap="wrap">
       <TooltipDelayGroupProvider delay={{open: 400}}>
         {mainDecorators.map((decorator) => (
-          <ToolbarButton
-            key={decorator.value}
-            decorator={decorator}
-            editor={editor}
-            selection={selection}
-          />
+          <DecoratorInsert decorator={decorator} editor={editor} key={decorator.value} />
         ))}
       </TooltipDelayGroupProvider>
 
@@ -76,14 +67,11 @@ export function Toolbar() {
           menu={
             <Menu>
               {overflowDecorators.map((decorator) => (
-                <MenuItem
+                <DecoratorInsert
+                  decorator={decorator}
+                  editor={editor}
                   key={decorator.value}
-                  text={decorator.title}
-                  icon={iconMap[decorator.value]}
-                  onClick={() => {
-                    PortableTextEditor.toggleMark(editor, decorator.value)
-                    PortableTextEditor.focus(editor)
-                  }}
+                  isMenu
                 />
               ))}
             </Menu>
@@ -94,28 +82,48 @@ export function Toolbar() {
   )
 }
 
-function ToolbarButton(props: {
+function DecoratorInsert(props: {
   decorator: BlockDecoratorDefinition
-  editor: PortableTextEditor
-  selection: EditorSelection
+  editor: Editor
+  isMenu?: boolean
 }) {
-  const active =
-    props.selection !== null && PortableTextEditor.isMarkActive(props.editor, props.decorator.value)
+  const {decorator, editor, isMenu} = props
+
+  const active = useEditorSelector(editor, selectors.isActiveDecorator(decorator.value))
   const Icon = props.decorator.icon ? props.decorator.icon : iconMap[props.decorator.value]
 
+  const handleDecoratorClick = useCallback(() => {
+    editor.send({
+      type: 'decorator.toggle',
+      decorator: decorator.value,
+    })
+    editor.send({
+      type: 'focus',
+    })
+  }, [decorator.value, editor])
+
+  if (isMenu) {
+    return (
+      <MenuItem
+        text={decorator.title}
+        icon={iconMap[decorator.value]}
+        onClick={handleDecoratorClick}
+        tone={active ? 'neutral' : 'default'}
+        pressed={active}
+      />
+    )
+  }
+
   return (
-    <Tooltip animate content={<Text size={1}>{props.decorator.title}</Text>} placement="top" portal>
+    <Tooltip animate content={<Text size={1}>{decorator.title}</Text>} placement="top" portal>
       <Button
         mode="bleed"
         padding={2}
         selected={active}
-        key={props.decorator.value}
-        text={Icon ? undefined : props.decorator.title}
+        key={decorator.value}
+        text={Icon ? undefined : decorator.title}
         icon={Icon}
-        onClick={() => {
-          PortableTextEditor.toggleMark(props.editor, props.decorator.value)
-          PortableTextEditor.focus(props.editor)
-        }}
+        onClick={handleDecoratorClick}
       />
     </Tooltip>
   )
