@@ -1,47 +1,42 @@
-import {type ArrayDefinition, defineType} from 'sanity'
+import {defineType, SchemaTypeDefinition} from 'sanity'
 
-import {InputComponent} from './InputComponent'
-import {PtStringOptions} from './types'
+import {InputComponent, type PtStringInputProps} from './InputComponent'
+import type {PtStringConfig} from './types'
 /**
  * @public
  */
-const ptStringTypeName = 'pt-string' as const
-
-/**
- * @public
- */
-export interface PtStringDefinition
-  extends Omit<ArrayDefinition, 'type' | 'of' | 'options' | 'decorators'> {
-  type: typeof ptStringTypeName
-  options?: PtStringOptions
-}
-
-declare module '@sanity/types' {
-  // makes type: 'ptString' narrow correctly when using defineType/defineField/defineArrayMember
-  export interface IntrinsicDefinitions {
-    ptString: PtStringDefinition
-  }
-}
+export const ptStringTypeName = 'pt-string' as const
 
 /**
  * @public
  */
-export const ptStringType = defineType({
-  type: 'array',
-  name: ptStringTypeName,
-  components: {input: InputComponent},
-  of: [
-    {
-      type: 'block',
-      marks: {
-        decorators: [
-          {title: 'Strong', value: 'strong'},
-          {title: 'Emphasis', value: 'em'},
-          {title: 'Code', value: 'code'},
-          {title: 'Underline', value: 'underline'},
-          {title: 'Strike', value: 'strike-through'},
-        ],
-      },
+export const ptStringType = (config: PtStringConfig): SchemaTypeDefinition => {
+  const {annotations} = config
+
+  return defineType({
+    type: 'array',
+    name: ptStringTypeName,
+    components: {
+      input: (props: PtStringInputProps) =>
+        InputComponent({...props, defaultAnnotations: config?.annotations}),
     },
-  ],
-})
+    of: [
+      // @ts-expect-error we want to define "of" here even though it's not allowed on the "ptStringTypeName" schema type in Studios
+      {
+        type: 'block',
+        styles: [{title: 'Normal', value: 'normal'}],
+        lists: [],
+        marks: {
+          decorators: [
+            {title: 'Strong', value: 'strong'},
+            {title: 'Emphasis', value: 'em'},
+            {title: 'Code', value: 'code'},
+            {title: 'Underline', value: 'underline'},
+            {title: 'Strike', value: 'strike-through'},
+          ],
+          annotations: annotations || [],
+        },
+      },
+    ],
+  })
+}

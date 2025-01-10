@@ -2,30 +2,33 @@ import {
   EditorEmittedEvent,
   EditorEventListener,
   EditorProvider,
-  OnPasteResult,
-  PasteData,
   PortableTextEditable,
+  RenderAnnotationFunction,
   RenderDecoratorFunction,
   RenderPlaceholderFunction,
 } from '@portabletext/editor'
-import {htmlToBlocks, randomKey} from '@sanity/block-tools'
+import {coreBehaviors, defineBehavior} from '@portabletext/editor/behaviors'
+import {htmlToBlocks} from '@sanity/block-tools'
 import {Box, Card, Flex, ThemeProvider, useToast} from '@sanity/ui'
 import {type JSX, type KeyboardEvent, useCallback, useMemo, useState} from 'react'
 import {
-  ArrayDefinition,
-  ArrayOfObjectsInputProps,
-  BlockDefinition,
+  type ArrayDefinition,
+  type ArrayOfObjectsInputProps,
+  type BlockAnnotationDefinition,
+  type BlockDefinition,
   ChangeIndicator,
+  isPortableTextTextBlock,
   type PortableTextBlock,
   PortableTextChild,
+  PortableTextObject,
   type PortableTextSpan,
-  TypedObject,
   useConnectionState,
 } from 'sanity'
 import {useDocumentPane} from 'sanity/structure'
 import styled from 'styled-components'
 
-import {decoratorMap} from './decoratorMap'
+import {Annotation, AnnotationForm} from './Annotation'
+import {annotationMap, decoratorMap} from './defaultPreviews'
 import {ptStringType} from './schema'
 import {Toolbar} from './Toolbar'
 import {PtStringOptions} from './types'
@@ -56,30 +59,26 @@ const InputWrapper = styled(Card)`
   }
 `
 
-const Placeholder = styled(Card)`
+const Placeholder = styled('div')`
   color: ${(props) => props.theme.sanity.color.input.default.enabled.placeholder};
 `
 
-const optionizedSchemaType = (schemaType: ArrayDefinition, options?: PtStringOptions) => {
-  const newSchemaType = {...schemaType}
-
-  if (options?.decorators) {
-    const block = newSchemaType.of[0] as BlockDefinition
-    if (!block.marks) block.marks = {}
-    block.marks.decorators = options.decorators
-  }
-  return newSchemaType
+export type PtStringInputProps = ArrayOfObjectsInputProps & {
+  schemaType: {options?: PtStringOptions}
+  defaultAnnotations?: BlockAnnotationDefinition[]
 }
 
-export function InputComponent({
-  elementProps,
-  value = EMPTY_ARRAY,
-  path,
-  readOnly,
-  changed,
-  schemaType,
-  onChange,
-}: ArrayOfObjectsInputProps & {schemaType: {options?: PtStringOptions}}): JSX.Element {
+export function InputComponent(props: PtStringInputProps): JSX.Element {
+  const {
+    elementProps,
+    value = EMPTY_ARRAY,
+    path,
+    readOnly,
+    changed,
+    schemaType,
+    onChange,
+    defaultAnnotations,
+  } = props
   const toast = useToast()
   const [hasFocusWithin, setHasFocusWithin] = useState(false)
   const {editState, documentId, documentType} = useDocumentPane()
@@ -89,8 +88,32 @@ export function InputComponent({
     return connectionState === 'connected' && editState?.ready
   }, [connectionState, editState])
 
-  const schema = optionizedSchemaType(ptStringType, schemaType.options)
+  // Get the original schema type with default decorators and annotations
+  const originalSchemaType = ptStringType({annotations: defaultAnnotations})
 
+  // Merge the original schema type with the custom options
+  const schema = useMemo(() => {
+    const newSchemaType = {...originalSchemaType} as ArrayDefinition
+
+    const block = newSchemaType.of[0] as BlockDefinition
+    if (!block.marks) block.marks = {}
+
+    if (schemaType?.options?.decorators) {
+      block.marks.decorators = schemaType?.options.decorators
+    }
+
+    if (Array.isArray(schemaType?.options?.disableAnnotations)) {
+      block.marks.annotations = block?.marks?.annotations?.filter(
+        (annotation) => annotation.name != 'placeholder',
+      )
+    } else if (schemaType?.options?.disableAnnotations) {
+      block.marks.annotations = []
+    }
+
+    return newSchemaType
+  }, [originalSchemaType, schemaType])
+
+  // Prevent the default behavior of inserting a new block when pressing Enter
   const handleKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Enter') {
       event.preventDefault()
@@ -98,65 +121,93 @@ export function InputComponent({
     }
   }, [])
 
-  /**
-   * Merge blocks from pasted HTML into a single block
-   */
-  const handlePaste = useCallback((input: PasteData): OnPasteResult => {
-    const {event, schemaTypes, path: inputPath} = input
-    const html = event.clipboardData.getData('text/html')
-    if (!html) return {insert: [], path: inputPath}
+  const pasteBehaviour = defineBehavior({
+    on: 'paste',
+    guard: ({context, event}) => {
+      const ptText = event.data.getData('application/x-portable-text')
+      const html = event.data.getData('text/html')
 
-    const blocks = htmlToBlocks(html, schemaTypes.portableText) as PortableTextBlock[]
+      // it's plain text, not portable text or htmls so just paste as is
+      if (!ptText && !html) return false
 
-    const mergeToSingleBlock = (
-      blocksToMerge: PortableTextBlock[],
-    ): Array<PortableTextBlock | PortableTextSpan> => {
-      let mergedSpans: PortableTextSpan[] = []
+      const blocks = ptText
+        ? JSON.parse(ptText)
+        : (htmlToBlocks(html, context.schema.portableText) as PortableTextBlock[])
 
-      blocksToMerge.forEach((block: PortableTextBlock) => {
-        if (block._type === 'block' && Array.isArray(block.children)) {
-          block.children.forEach((child: PortableTextChild) => {
-            if (child._type === 'span') {
-              mergedSpans.push({...(child as PortableTextSpan)})
-            } else {
-              const nestedSpans = mergeToSingleBlock([
-                child as PortableTextBlock,
-              ]) as PortableTextSpan[]
-              mergedSpans = [...mergedSpans, ...nestedSpans]
+      const mergeToSingleBlock = (
+        blocksToMerge: PortableTextBlock[],
+      ): {
+        children: PortableTextSpan[]
+        markDefs: PortableTextObject[]
+      } => {
+        let mergedSpans: PortableTextSpan[] = []
+        const mergedMarkDefs: PortableTextObject[] = []
+
+        blocksToMerge.forEach((block: PortableTextBlock, blockIndex: number) => {
+          if (block._type === 'block' && Array.isArray(block.children)) {
+            const childCount = block.children.length
+            block.children.forEach((child: PortableTextChild, childIndex: number) => {
+              if (child._type === 'span') {
+                const isLastChild = childIndex === childCount - 1
+                const isLastBlock = blockIndex === blocksToMerge.length - 1
+                if (isLastChild && !isLastBlock && !(child?.text as string)?.endsWith(' ')) {
+                  child.text += ' '
+                }
+
+                mergedSpans.push({...(child as PortableTextSpan)})
+              } else {
+                const nestedSpans = mergeToSingleBlock([child as PortableTextBlock])
+                  .children as PortableTextSpan[]
+                mergedSpans = [...mergedSpans, ...nestedSpans]
+              }
+            })
+
+            if (isPortableTextTextBlock(block)) {
+              block?.markDefs?.forEach((markDef) => {
+                mergedMarkDefs.push(markDef)
+              })
             }
-          })
-        }
-      })
+          }
+        })
 
-      // Ensure spaces between spans from different blocks or sub-blocks
-      for (let i = 0; i < mergedSpans.length - 1; i++) {
-        if (mergedSpans[i].text.endsWith(' ')) continue
-        // If the next span has marks, insert a space, otherwise merge the text
-        if (mergedSpans[i]?.marks?.length) {
-          mergedSpans.splice(i + 1, 0, {
-            _key: randomKey(12),
-            _type: 'span',
-            text: ' ',
-          } as PortableTextSpan)
-        } else {
-          mergedSpans[i].text += ' '
+        return {
+          children: mergedSpans,
+          markDefs: mergedMarkDefs,
         }
       }
 
-      return new Array({
-        _key: randomKey(12),
-        _type: 'block',
-        children: mergedSpans,
-        style: 'normal',
-      })
-    }
+      return mergeToSingleBlock(blocks)
+    },
+    actions: [
+      (_, {children, markDefs}) => {
+        return children.map((child) => {
+          const decorators = child.marks
+            ?.filter((mark) => !markDefs.find((def) => def._key === mark))
+            .filter((decorator) => decorator !== null)
 
-    return {
-      insert: mergeToSingleBlock(blocks) as unknown as TypedObject[],
-      path: inputPath,
-    }
-  }, [])
+          const annotations = child.marks
+            ?.map((mark) => {
+              const foundAnnotation = markDefs.find((def) => def._key === mark)
+              if (foundAnnotation) {
+                const {_type, _key, ...rest} = foundAnnotation
+                return {name: _type, value: rest}
+              }
+              return null
+            })
+            .filter((annotation) => annotation !== null)
 
+          return {
+            type: 'insert.span',
+            text: child.text,
+            decorators,
+            annotations,
+          }
+        })
+      },
+    ],
+  })
+
+  // When the editor emits an event, update the form value
   const handleEditorChange = useCallback(
     (event: EditorEmittedEvent) => {
       switch (event.type) {
@@ -181,15 +232,64 @@ export function InputComponent({
     [onChange, toast],
   )
 
+  // Render a placeholder when the editor is empty
   const renderPlaceholder: RenderPlaceholderFunction = useCallback(() => {
     return <Placeholder>Empty</Placeholder>
   }, [])
 
-  const renderDecorator: RenderDecoratorFunction = useCallback((props) => {
-    const CustomDecoratorComponent = props.schemaType.component
-    if (CustomDecoratorComponent) return <CustomDecoratorComponent {...props} />
-    return (decoratorMap.get(props.value) ?? ((decoratorProps) => decoratorProps.children))(props)
+  // Render custom decorators or use the default ones
+  const renderDecorator: RenderDecoratorFunction = useCallback((decoratorProps) => {
+    const CustomDecoratorComponent = decoratorProps.schemaType.component
+    if (CustomDecoratorComponent) return <CustomDecoratorComponent {...decoratorProps} />
+    return (decoratorMap.get(decoratorProps.value) ?? ((dProps) => dProps.children))(decoratorProps)
   }, [])
+
+  // Render custom annotations or use the default ones
+  const renderAnnotation: RenderAnnotationFunction = useCallback((annotationProps) => {
+    const CustomAnnotationComponent = annotationProps.schemaType.components?.preview
+    const DefaultAnnotationComponent = (
+      (annotationMap.get(annotationProps.schemaType.name) || annotationMap.get('default')) ??
+      ((aProps) => aProps.children)
+    )(annotationProps)
+
+    return (
+      <Annotation annotationPath={annotationProps?.path}>
+        {CustomAnnotationComponent ? (
+          <CustomAnnotationComponent {...annotationProps} />
+        ) : (
+          DefaultAnnotationComponent
+        )}
+      </Annotation>
+    )
+
+    // if (annotationProps.schemaType.name === 'link') {
+    //   return (
+    //     <>
+    //       <AnnotationForm
+    //         {...props}
+    //         annotationPath={[
+    //           {_key: annotationProps.block._key},
+    //           'markDefs',
+    //           {_key: annotationProps.value._key},
+    //         ]}
+    //       />
+    //       <span
+    //         style={{
+    //           color: 'blue',
+    //           borderBottom: `1px solid blue`,
+    //           display: 'inline-block',
+    //         }}
+    //       >
+    //         {annotationProps.children}
+    //       </span>
+    //     </>
+    //   )
+    // }
+  }, [])
+
+  const buttonCount =
+    ((schema?.of[0] as BlockDefinition)?.marks?.decorators?.length || 0) +
+    ((schema?.of[0] as BlockDefinition)?.marks?.annotations?.length || 0)
 
   return (
     <ThemeProvider>
@@ -204,12 +304,13 @@ export function InputComponent({
             readOnly: !ready || readOnly,
             initialValue: value as PortableTextBlock[],
             schema,
+            behaviors: [...coreBehaviors, pasteBehaviour],
           }}
         >
           <EditorEventListener on={handleEditorChange} />
           <InputWrapper
             shadow={1}
-            paddingY={(schema?.of[0] as BlockDefinition)?.marks?.decorators?.length ? 1 : 2}
+            paddingY={buttonCount ? 1 : 2}
             paddingRight={1}
             paddingLeft={3}
             radius={2}
@@ -219,9 +320,9 @@ export function InputComponent({
               <Box flex={1} overflow={'auto'} height="fill">
                 <PortableTextEditable
                   renderDecorator={renderDecorator}
+                  renderAnnotation={renderAnnotation}
                   renderPlaceholder={renderPlaceholder}
                   onKeyDown={handleKeyDown}
-                  onPaste={handlePaste}
                   readOnly={!ready || readOnly}
                   {...elementProps}
                 />
