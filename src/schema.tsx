@@ -11,20 +11,25 @@ export const ptStringTypeName = 'pt-string' as const
  * @public
  */
 export const ptStringType = (config: PtStringConfig): SchemaTypeDefinition => {
-  const {annotations} = config
+  const {annotations, inlineBlocks} = config
 
   return defineType({
     type: 'array',
     name: ptStringTypeName,
     components: {
       input: (props: PtStringInputProps) =>
-        InputComponent({...props, defaultAnnotations: config?.annotations}),
+        InputComponent({
+          ...props,
+          defaultAnnotations: config?.annotations,
+          defaultInlineBlocks: config?.inlineBlocks,
+        }),
     },
     of: [
       // @ts-expect-error we want to define "of" here even though it's not allowed on the "ptStringTypeName" schema type in Studios
       {
         type: 'block',
         styles: [{title: 'Normal', value: 'normal'}],
+        of: inlineBlocks || [],
         lists: [],
         marks: {
           decorators: [

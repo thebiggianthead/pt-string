@@ -1,4 +1,9 @@
-import type {ArrayDefinition, BlockAnnotationDefinition, BlockDecoratorDefinition} from 'sanity'
+import type {
+  ArrayDefinition,
+  ArrayOfType,
+  BlockAnnotationDefinition,
+  BlockDecoratorDefinition,
+} from 'sanity'
 
 import {ptStringTypeName} from './schema'
 
@@ -7,6 +12,7 @@ import {ptStringTypeName} from './schema'
  */
 export interface PtStringConfig {
   annotations?: BlockAnnotationDefinition[]
+  inlineBlocks?: ArrayOfType<'object' | 'reference', undefined>[]
 }
 
 /**
@@ -15,6 +21,7 @@ export interface PtStringConfig {
 export interface PtStringOptions {
   decorators?: BlockDecoratorDefinition[]
   disableAnnotations?: boolean | string[]
+  disableInlineBlocks?: boolean | string[]
 }
 
 /**

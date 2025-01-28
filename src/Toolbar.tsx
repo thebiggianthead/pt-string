@@ -1,4 +1,8 @@
-import {useEditor, useEditorSelector} from '@portabletext/editor'
+import {
+  type PortableTextMemberSchemaTypes,
+  useEditor,
+  useEditorSelector,
+} from '@portabletext/editor'
 import * as selectors from '@portabletext/editor/selectors'
 import {
   BoldIcon,
@@ -23,7 +27,6 @@ import {
   useMediaIndex,
 } from '@sanity/ui'
 import {type JSX, useCallback, useId, useMemo} from 'react'
-import type {BlockAnnotationDefinition, BlockDecoratorDefinition} from 'sanity'
 
 const iconMap: Record<string, IconComponent> = {
   strong: BoldIcon,
@@ -34,8 +37,8 @@ const iconMap: Record<string, IconComponent> = {
   link: LinkIcon,
 }
 
-const MOBILE_DECORATOR_LIMIT = 2
-const DESKTOP_DECORATOR_LIMIT = 5
+const MOBILE_BUTTON_LIMIT = 2
+const DESKTOP_BUTTON_LIMIT = 5
 
 export function Toolbar(): JSX.Element {
   const editor = useEditor()
@@ -44,18 +47,25 @@ export function Toolbar(): JSX.Element {
   const menuId = useId()
 
   const isMobile = mediaIndex < 2
-  // const decorators = filterDecorators(currentSchema.decorators, options)
   const decorators = currentSchema.decorators
-  const decoratorLimit = isMobile ? MOBILE_DECORATOR_LIMIT : DESKTOP_DECORATOR_LIMIT
   const annotations = currentSchema.annotations
+  const inlineObjects = currentSchema.inlineObjects
+  const buttonLimit = isMobile ? MOBILE_BUTTON_LIMIT : DESKTOP_BUTTON_LIMIT
 
   const mainDecorators = useMemo(() => {
-    return decorators.slice(0, decoratorLimit)
-  }, [decorators, decoratorLimit])
+    return decorators.slice(0, buttonLimit)
+  }, [decorators, buttonLimit])
   const overflowDecorators = useMemo(() => {
-    return decorators.slice(decoratorLimit)
-  }, [decorators, decoratorLimit])
-  const showMenuButton = decorators.length > decoratorLimit
+    return decorators.slice(buttonLimit)
+  }, [decorators, buttonLimit])
+  const mainAnnotations = useMemo(() => {
+    return annotations.slice(0, buttonLimit - mainDecorators.length)
+  }, [annotations, buttonLimit, mainDecorators.length])
+  const overflowAnnotations = useMemo(() => {
+    return annotations.slice(buttonLimit - mainDecorators.length)
+  }, [annotations, buttonLimit, mainDecorators.length])
+
+  const showMenuButton = decorators.length + annotations.length > buttonLimit
 
   return (
     <Flex gap={1} wrap="wrap">
@@ -63,8 +73,7 @@ export function Toolbar(): JSX.Element {
         {mainDecorators.map((decorator) => (
           <DecoratorInsert decorator={decorator} key={decorator.value} />
         ))}
-        {annotations.map((annotation) => (
-          // @ts-expect-error for now
+        {mainAnnotations.map((annotation) => (
           <AnnotationInsert annotation={annotation} key={annotation.name} />
         ))}
       </TooltipDelayGroupProvider>
@@ -78,6 +87,9 @@ export function Toolbar(): JSX.Element {
               {overflowDecorators.map((decorator) => (
                 <DecoratorInsert decorator={decorator} key={decorator.value} isMenu />
               ))}
+              {overflowAnnotations.map((annotation) => (
+                <AnnotationInsert annotation={annotation} key={annotation.name} isMenu />
+              ))}
             </Menu>
           }
         />
@@ -86,7 +98,10 @@ export function Toolbar(): JSX.Element {
   )
 }
 
-function DecoratorInsert(props: {decorator: BlockDecoratorDefinition; isMenu?: boolean}) {
+function DecoratorInsert(props: {
+  decorator: PortableTextMemberSchemaTypes['decorators'][0]
+  isMenu?: boolean
+}) {
   const editor = useEditor()
   const {decorator, isMenu} = props
 
@@ -121,7 +136,6 @@ function DecoratorInsert(props: {decorator: BlockDecoratorDefinition; isMenu?: b
         mode="bleed"
         padding={2}
         selected={active}
-        key={decorator.value}
         text={Icon ? undefined : decorator.title}
         icon={Icon}
         onClick={handleDecoratorClick}
@@ -130,7 +144,10 @@ function DecoratorInsert(props: {decorator: BlockDecoratorDefinition; isMenu?: b
   )
 }
 
-function AnnotationInsert(props: {annotation: BlockAnnotationDefinition; isMenu?: boolean}) {
+function AnnotationInsert(props: {
+  annotation: PortableTextMemberSchemaTypes['annotations'][0]
+  isMenu?: boolean
+}) {
   const editor = useEditor()
   const {annotation, isMenu} = props
   const active = useEditorSelector(editor, selectors.isActiveAnnotation(annotation.name))
@@ -158,13 +175,24 @@ function AnnotationInsert(props: {annotation: BlockAnnotationDefinition; isMenu?
     })
   }, [active, annotation.name, editor])
 
+  if (isMenu) {
+    return (
+      <MenuItem
+        text={annotation.title}
+        icon={Icon}
+        onClick={handleAnnotationClick}
+        tone={active ? 'neutral' : 'default'}
+        pressed={active}
+      />
+    )
+  }
+
   return (
     <Tooltip animate content={<Text size={1}>{annotation.title}</Text>} placement="top" portal>
       <Button
         mode="bleed"
         padding={2}
         selected={active}
-        key={annotation.name}
         text={Icon ? undefined : annotation.title}
         icon={Icon}
         onClick={handleAnnotationClick}

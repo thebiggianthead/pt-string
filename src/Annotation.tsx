@@ -1,44 +1,41 @@
-// @ts-nocheck
-
-import {useEditor, useEditorSelector} from '@portabletext/editor'
+import {BlockAnnotationRenderProps, useEditor, useEditorSelector} from '@portabletext/editor'
 import * as selectors from '@portabletext/editor/selectors'
 import {EditIcon, TrashIcon} from '@sanity/icons'
+import {Box, Button, Card, Dialog, Flex, Popover, Portal, Text} from '@sanity/ui'
+import {cloneDeep} from 'lodash'
 import {
-  Box,
-  Button,
-  Card,
-  Checkbox,
-  Dialog,
-  Flex,
-  Inline,
-  Popover,
-  Portal,
-  Stack,
-  Text,
-} from '@sanity/ui'
-import {type JSX, type ReactElement, useCallback, useEffect, useMemo, useState} from 'react'
+  type Dispatch,
+  type JSX,
+  type ReactElement,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
 import {
-  FormField,
+  type ArrayOfObjectsInputProps,
   FormInput,
-  MemberField,
-  type ObjectInputProps,
+  KeyedObject,
   type Path,
   pathToString,
-  type RenderInputCallback,
+  PortableTextObject,
 } from 'sanity'
 
-export function Annotation({
-  annotationPath,
-  children,
-}: {
+type AnnotationProps = BlockAnnotationRenderProps & {
   annotationPath: Path
+  setEditableAnnotation: Dispatch<SetStateAction<Path | null>>
   children: ReactElement
-}): JSX.Element {
+}
+
+export function Annotation(props: AnnotationProps): JSX.Element {
+  const {annotationPath, setEditableAnnotation, children, ...annotationProps} = props
+
   const editor = useEditor()
   const selectedSpan = useEditorSelector(editor, selectors.getFocusSpan)
   const selectedBlock = useEditorSelector(editor, selectors.getFocusBlock)
-  const spanType = selectedBlock?.node.markDefs?.find(
-    (markDef) => markDef._key === selectedSpan?.node.marks[0],
+  const spanType = (selectedBlock?.node.markDefs as PortableTextObject[])?.find(
+    (markDef) => markDef._key === selectedSpan?.node?.marks?.[0],
   )?._type
   const annotationSchema =
     spanType &&
@@ -80,19 +77,39 @@ export function Annotation({
   editor.on('blurred', () => {
     setTimeout(() => {
       setOpen(false)
-    }, 100)
+    }, 150)
   })
 
   const handleRemoveButtonClicked = useCallback(() => {
-    console.log('remove it', annotationSchema?.name)
-    editor.send({
-      type: 'annotation.remove',
-      annotation: {
-        name: annotationSchema?.name,
-      },
-    })
+    if (annotationSchema && annotationSchema?.name) {
+      editor.send({
+        type: 'annotation.remove',
+        annotation: {
+          name: annotationSchema?.name,
+        },
+      })
+    }
     editor.send({type: 'focus'})
-  }, [annotationSchema?.name, editor])
+  }, [annotationSchema, editor])
+
+  const handleEditButtonClicked = useCallback(() => {
+    const markDefPath = cloneDeep(annotationPath)
+    const lastIndex = markDefPath.lastIndexOf('children')
+    if (lastIndex !== -1) {
+      markDefPath[lastIndex] = 'markDefs' // Replace "children" with "markDefs" in the final instance
+    }
+    // Check if the last item is an object with a `_key` property
+    // and replace it with the value _key instead
+    if (
+      markDefPath.length > 0 &&
+      typeof markDefPath[markDefPath.length - 1] === 'object' &&
+      '_key' in (markDefPath[markDefPath.length - 1] as KeyedObject)
+    ) {
+      ;(markDefPath[markDefPath.length - 1] as KeyedObject)._key = annotationProps?.value?._key // Replace the `_key` value
+    }
+    setOpen(false)
+    setEditableAnnotation(markDefPath)
+  }, [annotationPath, annotationProps?.value?._key, setEditableAnnotation])
 
   return (
     <Popover
@@ -101,7 +118,7 @@ export function Annotation({
           <Flex gap={1}>
             <Box padding={2}>
               <Text weight="medium" size={1}>
-                {annotationSchema?.title || 'Edit Annotation'}
+                {(annotationSchema && annotationSchema?.title) || 'Edit Annotation'}
               </Text>
             </Box>
             <Button
@@ -109,7 +126,7 @@ export function Annotation({
               data-testid="edit-annotation-button"
               icon={EditIcon}
               mode="bleed"
-              // onClick={handleEditButtonClicked}
+              onClick={handleEditButtonClicked}
               tabIndex={0}
               padding={2}
             />
@@ -139,24 +156,35 @@ export function Annotation({
   )
 }
 
-export function AnnotationForm(props: ObjectInputProps & {annotationPath: Path}): JSX.Element {
-  const path = [...props.path, ...props.annotationPath]
+type AnnotationFormProps = ArrayOfObjectsInputProps & {
+  annotationPath: Path
+  setEditableAnnotation: Dispatch<SetStateAction<Path | null>>
+}
 
-  props.members[0].item.schemaType.options = props.annotationSchema
+export function AnnotationForm(props: AnnotationFormProps): JSX.Element {
+  const path = [...props.path, ...props.annotationPath]
+  const {setEditableAnnotation} = props
+  const editor = useEditor()
+
+  const onClose = useCallback(() => {
+    setEditableAnnotation(null)
+    editor.send({type: 'focus'})
+  }, [editor, setEditableAnnotation])
 
   return (
-    // <Portal>
-    //   <Dialog header="Example" id="dialog-example" zOffset={1000}>
-    <Stack space={2}>
-      <Card padding={3} radius={2}>
-        <Stack space={4}>
-          <Card shadow={2} padding={3} radius={2}>
-            <FormInput {...props} absolutePath={path} />
-          </Card>
-        </Stack>
-      </Card>
-    </Stack>
-    //   </Dialog>
-    // </Portal>
+    <Portal>
+      <Dialog
+        header="Example"
+        id="dialog-example"
+        zOffset={1000}
+        onClickOutside={onClose}
+        onClose={onClose}
+        width={600}
+      >
+        <Card padding={4} radius={2}>
+          <FormInput {...props} absolutePath={path} />
+        </Card>
+      </Dialog>
+    </Portal>
   )
 }

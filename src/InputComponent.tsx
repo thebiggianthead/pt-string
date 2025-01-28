@@ -1,3 +1,4 @@
+import {htmlToBlocks} from '@portabletext/block-tools'
 import {
   EditorEmittedEvent,
   EditorEventListener,
@@ -8,19 +9,20 @@ import {
   RenderPlaceholderFunction,
 } from '@portabletext/editor'
 import {coreBehaviors, defineBehavior} from '@portabletext/editor/behaviors'
-import {htmlToBlocks} from '@sanity/block-tools'
 import {Box, Card, Flex, ThemeProvider, useToast} from '@sanity/ui'
 import {type JSX, type KeyboardEvent, useCallback, useMemo, useState} from 'react'
 import {
   type ArrayDefinition,
   type ArrayOfObjectsInputProps,
+  type ArrayOfType,
   type BlockAnnotationDefinition,
   type BlockDefinition,
   ChangeIndicator,
   isPortableTextTextBlock,
+  type Path,
   type PortableTextBlock,
-  PortableTextChild,
-  PortableTextObject,
+  type PortableTextChild,
+  type PortableTextObject,
   type PortableTextSpan,
   useConnectionState,
 } from 'sanity'
@@ -66,6 +68,7 @@ const Placeholder = styled('div')`
 export type PtStringInputProps = ArrayOfObjectsInputProps & {
   schemaType: {options?: PtStringOptions}
   defaultAnnotations?: BlockAnnotationDefinition[]
+  defaultInlineBlocks?: ArrayOfType<'object' | 'reference', undefined>[]
 }
 
 export function InputComponent(props: PtStringInputProps): JSX.Element {
@@ -78,6 +81,7 @@ export function InputComponent(props: PtStringInputProps): JSX.Element {
     schemaType,
     onChange,
     defaultAnnotations,
+    defaultInlineBlocks,
   } = props
   const toast = useToast()
   const [hasFocusWithin, setHasFocusWithin] = useState(false)
@@ -89,7 +93,10 @@ export function InputComponent(props: PtStringInputProps): JSX.Element {
   }, [connectionState, editState])
 
   // Get the original schema type with default decorators and annotations
-  const originalSchemaType = ptStringType({annotations: defaultAnnotations})
+  const originalSchemaType = ptStringType({
+    annotations: defaultAnnotations,
+    inlineBlocks: defaultInlineBlocks,
+  })
 
   // Merge the original schema type with the custom options
   const schema = useMemo(() => {
@@ -104,7 +111,9 @@ export function InputComponent(props: PtStringInputProps): JSX.Element {
 
     if (Array.isArray(schemaType?.options?.disableAnnotations)) {
       block.marks.annotations = block?.marks?.annotations?.filter(
-        (annotation) => annotation.name != 'placeholder',
+        (annotation) =>
+          !annotation.name ||
+          !(schemaType?.options?.disableAnnotations as string[]).includes(annotation.name),
       )
     } else if (schemaType?.options?.disableAnnotations) {
       block.marks.annotations = []
@@ -137,10 +146,10 @@ export function InputComponent(props: PtStringInputProps): JSX.Element {
       const mergeToSingleBlock = (
         blocksToMerge: PortableTextBlock[],
       ): {
-        children: PortableTextSpan[]
+        children: (PortableTextSpan | PortableTextObject)[]
         markDefs: PortableTextObject[]
       } => {
-        let mergedSpans: PortableTextSpan[] = []
+        let mergedSpans: (PortableTextSpan | PortableTextObject)[] = []
         const mergedMarkDefs: PortableTextObject[] = []
 
         blocksToMerge.forEach((block: PortableTextBlock, blockIndex: number) => {
@@ -155,6 +164,8 @@ export function InputComponent(props: PtStringInputProps): JSX.Element {
                 }
 
                 mergedSpans.push({...(child as PortableTextSpan)})
+              } else if (context.schema.inlineObjects.find((io) => io.name === child._type)) {
+                mergedSpans.push(child as PortableTextObject)
               } else {
                 const nestedSpans = mergeToSingleBlock([child as PortableTextBlock])
                   .children as PortableTextSpan[]
@@ -180,27 +191,41 @@ export function InputComponent(props: PtStringInputProps): JSX.Element {
     },
     actions: [
       (_, {children, markDefs}) => {
-        return children.map((child) => {
-          const decorators = child.marks
-            ?.filter((mark) => !markDefs.find((def) => def._key === mark))
-            .filter((decorator) => decorator !== null)
+        const isSpan = (child: PortableTextChild): child is PortableTextSpan => {
+          return child._type === 'span'
+        }
 
-          const annotations = child.marks
-            ?.map((mark) => {
-              const foundAnnotation = markDefs.find((def) => def._key === mark)
-              if (foundAnnotation) {
-                const {_type, _key, ...rest} = foundAnnotation
-                return {name: _type, value: rest}
-              }
-              return null
-            })
-            .filter((annotation) => annotation !== null)
+        return children.map((child) => {
+          if (isSpan(child)) {
+            const decorators = child.marks
+              ?.filter((mark) => !markDefs.find((def) => def._key === mark))
+              .filter((decorator) => decorator !== null)
+
+            const annotations = child.marks
+              ?.map((mark) => {
+                const foundAnnotation = markDefs.find((def) => def._key === mark)
+                if (foundAnnotation) {
+                  const {_type, ...rest} = foundAnnotation
+                  return {name: _type, value: rest}
+                }
+                return null
+              })
+              .filter((annotation) => annotation !== null)
+
+            return {
+              type: 'insert.span',
+              text: child.text,
+              decorators,
+              annotations,
+            }
+          }
 
           return {
-            type: 'insert.span',
-            text: child.text,
-            decorators,
-            annotations,
+            type: 'insert.inline object',
+            inlineObject: {
+              name: child._type,
+              child,
+            },
           }
         })
       },
@@ -244,6 +269,9 @@ export function InputComponent(props: PtStringInputProps): JSX.Element {
     return (decoratorMap.get(decoratorProps.value) ?? ((dProps) => dProps.children))(decoratorProps)
   }, [])
 
+  // Set a state for the annotation that should be editable
+  const [editableAnnotation, setEditableAnnotation] = useState<Path | null>(null)
+
   // Render custom annotations or use the default ones
   const renderAnnotation: RenderAnnotationFunction = useCallback((annotationProps) => {
     const CustomAnnotationComponent = annotationProps.schemaType.components?.preview
@@ -253,7 +281,11 @@ export function InputComponent(props: PtStringInputProps): JSX.Element {
     )(annotationProps)
 
     return (
-      <Annotation annotationPath={annotationProps?.path}>
+      <Annotation
+        annotationPath={annotationProps?.path}
+        setEditableAnnotation={setEditableAnnotation}
+        {...annotationProps}
+      >
         {CustomAnnotationComponent ? (
           <CustomAnnotationComponent {...annotationProps} />
         ) : (
@@ -261,30 +293,6 @@ export function InputComponent(props: PtStringInputProps): JSX.Element {
         )}
       </Annotation>
     )
-
-    // if (annotationProps.schemaType.name === 'link') {
-    //   return (
-    //     <>
-    //       <AnnotationForm
-    //         {...props}
-    //         annotationPath={[
-    //           {_key: annotationProps.block._key},
-    //           'markDefs',
-    //           {_key: annotationProps.value._key},
-    //         ]}
-    //       />
-    //       <span
-    //         style={{
-    //           color: 'blue',
-    //           borderBottom: `1px solid blue`,
-    //           display: 'inline-block',
-    //         }}
-    //       >
-    //         {annotationProps.children}
-    //       </span>
-    //     </>
-    //   )
-    // }
   }, [])
 
   const buttonCount =
@@ -307,6 +315,13 @@ export function InputComponent(props: PtStringInputProps): JSX.Element {
             behaviors: [...coreBehaviors, pasteBehaviour],
           }}
         >
+          {editableAnnotation && (
+            <AnnotationForm
+              {...props}
+              annotationPath={editableAnnotation}
+              setEditableAnnotation={setEditableAnnotation}
+            />
+          )}
           <EditorEventListener on={handleEditorChange} />
           <InputWrapper
             shadow={1}
